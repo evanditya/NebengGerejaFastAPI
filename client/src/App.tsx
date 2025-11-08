@@ -3,6 +3,7 @@ import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { AuthProvider, useAuth } from "@/lib/auth";
 import BottomNav from "@/components/BottomNav";
 import HomePage from "@/pages/HomePage";
 import LoginPage from "@/pages/LoginPage";
@@ -26,18 +27,26 @@ function Router() {
   );
 }
 
-function App() {
-  const userRole = "driver";
+function AppContent() {
+  const { user } = useAuth();
 
   return (
+    <div className="relative min-h-screen">
+      <Router />
+      <BottomNav userRole={user?.role} />
+    </div>
+  );
+}
+
+function App() {
+  return (
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <div className="relative min-h-screen">
-          <Router />
-          <BottomNav userRole={userRole} />
-        </div>
-        <Toaster />
-      </TooltipProvider>
+      <AuthProvider>
+        <TooltipProvider>
+          <AppContent />
+          <Toaster />
+        </TooltipProvider>
+      </AuthProvider>
     </QueryClientProvider>
   );
 }

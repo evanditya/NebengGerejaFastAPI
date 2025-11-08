@@ -1,18 +1,41 @@
 import { useState } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { ArrowLeft } from "lucide-react";
+import { useAuth } from "@/lib/auth";
+import { useToast } from "@/hooks/use-toast";
 
 export default function LoginPage() {
+  const [, setLocation] = useLocation();
+  const { login } = useAuth();
+  const { toast } = useToast();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('Login:', { email, password });
+    setIsLoading(true);
+    
+    try {
+      await login(email, password);
+      toast({
+        title: "Login berhasil",
+        description: "Selamat datang kembali!",
+      });
+      setLocation("/");
+    } catch (error: any) {
+      toast({
+        title: "Login gagal",
+        description: error.message || "Email atau password salah",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -41,6 +64,7 @@ export default function LoginPage() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
+                  disabled={isLoading}
                   data-testid="input-email"
                 />
               </div>
@@ -54,12 +78,13 @@ export default function LoginPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
+                  disabled={isLoading}
                   data-testid="input-password"
                 />
               </div>
 
-              <Button type="submit" className="w-full" data-testid="button-submit">
-                Masuk
+              <Button type="submit" className="w-full" disabled={isLoading} data-testid="button-submit">
+                {isLoading ? "Loading..." : "Masuk"}
               </Button>
             </form>
 

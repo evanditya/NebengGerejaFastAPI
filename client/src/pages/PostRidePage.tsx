@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -7,8 +8,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ArrowLeft } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { format } from "date-fns";
+import { id } from "date-fns/locale";
 
 export default function PostRidePage() {
+  const [, setLocation] = useLocation();
+  const { toast } = useToast();
   const [formData, setFormData] = useState({
     massId: "",
     pickupPoint: "",
@@ -16,16 +23,45 @@ export default function PostRidePage() {
     notes: "",
   });
 
-  //todo: remove mock functionality
-  const mockMasses = [
-    { id: '1', name: 'Misa Minggu Pagi - 12 Jan 2025, 07:00' },
-    { id: '2', name: 'Misa Sabtu Sore - 11 Jan 2025, 18:00' },
-    { id: '3', name: 'Misa Kamis Putih - 17 Apr 2025, 19:00' },
-  ];
+  const { data: massesData } = useQuery({
+    queryKey: ["/api/masses"],
+    queryFn: async () => {
+      const response = await fetch("/api/masses");
+      if (!response.ok) throw new Error("Failed to fetch masses");
+      return response.json();
+    },
+  });
+
+  const createRideMutation = useMutation({
+    mutationFn: async (data: any) => {
+      const response = await apiRequest("POST", "/api/rides", {
+        ...data,
+        seatsTotal: parseInt(data.seatsTotal),
+      });
+      return await response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/rides"] });
+      toast({
+        title: "Tumpangan berhasil ditawarkan",
+        description: "Penumpang bisa melihat tumpangan Anda sekarang.",
+      });
+      setLocation("/");
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Gagal menawarkan tumpangan",
+        description: error.message || "Terjadi kesalahan",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const masses = massesData?.masses || [];
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('Post ride:', formData);
+    createRideMutation.mutate(formData);
   };
 
   return (
@@ -50,14 +86,15 @@ export default function PostRidePage() {
                 <Select
                   value={formData.massId}
                   onValueChange={(value) => setFormData({ ...formData, massId: value })}
+                  disabled={createRideMutation.isPending}
                 >
                   <SelectTrigger id="mass" data-testid="select-mass">
                     <SelectValue placeholder="Pilih jadwal misa" />
                   </SelectTrigger>
                   <SelectContent>
-                    {mockMasses.map((mass) => (
+                    {masses.map((mass: any) => (
                       <SelectItem key={mass.id} value={mass.id}>
-                        {mass.name}
+                        {mass.name} - {format(new Date(mass.datetime), "dd MMM yyyy, HH:mm", { locale: id })}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -71,6 +108,7 @@ export default function PostRidePage() {
                   placeholder="Contoh: Lippo Cikarang, depan Supermal"
                   value={formData.pickupPoint}
                   onChange={(e) => setFormData({ ...formData, pickupPoint: e.target.value })}
+                  disabled={createRideMutation.isPending}
                   data-testid="input-pickup"
                 />
               </div>
@@ -80,6 +118,7 @@ export default function PostRidePage() {
                 <Select
                   value={formData.seatsTotal}
                   onValueChange={(value) => setFormData({ ...formData, seatsTotal: value })}
+                  disabled={createRideMutation.isPending}
                 >
                   <SelectTrigger id="seats" data-testid="select-seats">
                     <SelectValue />
@@ -102,12 +141,18 @@ export default function PostRidePage() {
                   value={formData.notes}
                   onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                   rows={4}
+                  disabled={createRideMutation.isPending}
                   data-testid="input-notes"
                 />
               </div>
 
-              <Button type="submit" className="w-full" data-testid="button-submit">
-                Tawarkan Tumpangan
+              <Button 
+                type="submit" 
+                className="w-full" 
+                disabled={createRideMutation.isPending}
+                data-testid="button-submit"
+              >
+                {createRideMutation.isPending ? "Loading..." : "Tawarkan Tumpangan"}
               </Button>
             </form>
           </Card>

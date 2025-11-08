@@ -1,13 +1,19 @@
 import { useState } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ArrowLeft } from "lucide-react";
+import { useAuth } from "@/lib/auth";
+import { useToast } from "@/hooks/use-toast";
 
 export default function RegisterPage() {
+  const [, setLocation] = useLocation();
+  const { register } = useAuth();
+  const { toast } = useToast();
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -16,18 +22,39 @@ export default function RegisterPage() {
     role: "passenger",
     password: "",
   });
+  const [isLoading, setIsLoading] = useState(false);
 
-  //todo: remove mock functionality
-  const mockEnvironments = [
-    "Lingkungan St. Petrus",
-    "Lingkungan St. Paulus",
-    "Lingkungan St. Yohanes",
-    "Lingkungan St. Maria",
-  ];
+  const { data: environmentsData } = useQuery({
+    queryKey: ["/api/environments"],
+    queryFn: async () => {
+      const response = await fetch("/api/environments");
+      if (!response.ok) throw new Error("Failed to fetch environments");
+      return response.json();
+    },
+  });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const environments = environmentsData?.environments || [];
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('Register:', formData);
+    setIsLoading(true);
+    
+    try {
+      await register(formData);
+      toast({
+        title: "Registrasi berhasil",
+        description: "Akun Anda telah dibuat!",
+      });
+      setLocation("/");
+    } catch (error: any) {
+      toast({
+        title: "Registrasi gagal",
+        description: error.message || "Terjadi kesalahan",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -55,6 +82,7 @@ export default function RegisterPage() {
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   required
+                  disabled={isLoading}
                   data-testid="input-name"
                 />
               </div>
@@ -68,6 +96,7 @@ export default function RegisterPage() {
                   value={formData.email}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                   required
+                  disabled={isLoading}
                   data-testid="input-email"
                 />
               </div>
@@ -81,6 +110,7 @@ export default function RegisterPage() {
                   value={formData.phone}
                   onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                   required
+                  disabled={isLoading}
                   data-testid="input-phone"
                 />
               </div>
@@ -90,14 +120,15 @@ export default function RegisterPage() {
                 <Select
                   value={formData.lingkungan}
                   onValueChange={(value) => setFormData({ ...formData, lingkungan: value })}
+                  disabled={isLoading}
                 >
                   <SelectTrigger id="lingkungan" data-testid="select-lingkungan">
                     <SelectValue placeholder="Pilih lingkungan" />
                   </SelectTrigger>
                   <SelectContent>
-                    {mockEnvironments.map((env) => (
-                      <SelectItem key={env} value={env}>
-                        {env}
+                    {environments.map((env: any) => (
+                      <SelectItem key={env.id} value={env.name}>
+                        {env.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -109,6 +140,7 @@ export default function RegisterPage() {
                 <Select
                   value={formData.role}
                   onValueChange={(value) => setFormData({ ...formData, role: value })}
+                  disabled={isLoading}
                 >
                   <SelectTrigger id="role" data-testid="select-role">
                     <SelectValue />
@@ -129,12 +161,13 @@ export default function RegisterPage() {
                   value={formData.password}
                   onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                   required
+                  disabled={isLoading}
                   data-testid="input-password"
                 />
               </div>
 
-              <Button type="submit" className="w-full" data-testid="button-submit">
-                Daftar
+              <Button type="submit" className="w-full" disabled={isLoading} data-testid="button-submit">
+                {isLoading ? "Loading..." : "Daftar"}
               </Button>
             </form>
 

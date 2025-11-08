@@ -1,8 +1,37 @@
 import express, { type Request, Response, NextFunction } from "express";
+import session from "express-session";
+import connectPg from "connect-pg-simple";
+import { Pool } from "@neondatabase/serverless";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+import { attachUser } from "./auth";
 
 const app = express();
+
+// Session configuration
+const PgSession = connectPg(session);
+const sessionPool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+app.use(
+  session({
+    store: new PgSession({
+      pool: sessionPool,
+      createTableIfMissing: true,
+    }),
+    secret: process.env.SESSION_SECRET || "nebeng-gereja-secret-key-change-in-production",
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+    },
+  })
+);
+
+// Attach user to request if logged in
+app.use(attachUser);
 
 declare module 'http' {
   interface IncomingMessage {

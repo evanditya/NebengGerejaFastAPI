@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import RideCard from "@/components/RideCard";
 import MassCard from "@/components/MassCard";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -8,69 +9,27 @@ export default function RidesPage() {
   const [selectedMass, setSelectedMass] = useState<string>("all");
   const [view, setView] = useState<string>("rides");
 
-  //todo: remove mock functionality
-  const mockMasses = [
-    {
-      id: '1',
-      name: 'Misa Minggu Pagi',
-      datetime: new Date(2025, 0, 12, 7, 0),
-      special: false,
+  const { data: massesData } = useQuery({
+    queryKey: ["/api/masses"],
+    queryFn: async () => {
+      const response = await fetch("/api/masses");
+      if (!response.ok) throw new Error("Failed to fetch masses");
+      return response.json();
     },
-    {
-      id: '2',
-      name: 'Misa Sabtu Sore',
-      datetime: new Date(2025, 0, 11, 18, 0),
-      special: false,
-    },
-    {
-      id: '3',
-      name: 'Misa Kamis Putih',
-      datetime: new Date(2025, 3, 17, 19, 0),
-      special: true,
-    },
-  ];
+  });
 
-  const mockRides = [
-    {
-      id: '1',
-      massId: '1',
-      massName: 'Misa Minggu Pagi',
-      massDatetime: new Date(2025, 0, 12, 7, 0),
-      driverName: 'Budi Santoso',
-      driverPhone: '081234567890',
-      pickupPoint: 'Lippo Cikarang, depan Supermal',
-      seatsAvailable: 3,
-      seatsTotal: 5,
-      notes: 'Berangkat jam 6:30 pagi. Mohon konfirmasi H-1.',
+  const { data: ridesData } = useQuery({
+    queryKey: ["/api/rides", selectedMass],
+    queryFn: async () => {
+      const url = selectedMass === "all" ? "/api/rides" : `/api/rides?massId=${selectedMass}`;
+      const response = await fetch(url);
+      if (!response.ok) throw new Error("Failed to fetch rides");
+      return response.json();
     },
-    {
-      id: '2',
-      massId: '2',
-      massName: 'Misa Sabtu Sore',
-      massDatetime: new Date(2025, 0, 11, 18, 0),
-      driverName: 'Maria Wijaya',
-      driverPhone: '082345678901',
-      pickupPoint: 'Cibitung, Perumahan Grand Cikarang',
-      seatsAvailable: 2,
-      seatsTotal: 4,
-    },
-    {
-      id: '3',
-      massId: '1',
-      massName: 'Misa Minggu Pagi',
-      massDatetime: new Date(2025, 0, 12, 7, 0),
-      driverName: 'Yohanes Tan',
-      driverPhone: '083456789012',
-      pickupPoint: 'Jababeka, dekat Gate Utama',
-      seatsAvailable: 1,
-      seatsTotal: 3,
-      notes: 'Siap jemput di area Jababeka.',
-    },
-  ];
+  });
 
-  const filteredRides = selectedMass === "all" 
-    ? mockRides 
-    : mockRides.filter(ride => ride.massId === selectedMass);
+  const masses = massesData?.masses || [];
+  const rides = ridesData?.rides || [];
 
   return (
     <div className="min-h-screen bg-background pb-20">
@@ -100,7 +59,7 @@ export default function RidesPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Semua Misa</SelectItem>
-                  {mockMasses.map((mass) => (
+                  {masses.map((mass: any) => (
                     <SelectItem key={mass.id} value={mass.id}>
                       {mass.name}
                     </SelectItem>
@@ -110,14 +69,28 @@ export default function RidesPage() {
             </div>
 
             <div className="space-y-3">
-              {filteredRides.length > 0 ? (
-                filteredRides.map(ride => (
-                  <RideCard 
-                    key={ride.id} 
-                    ride={ride}
-                    onViewDetails={(id) => console.log('View details:', id)}
-                  />
-                ))
+              {rides.length > 0 ? (
+                rides.map((ride: any) => {
+                  const mass = masses.find((m: any) => m.id === ride.massId);
+                  if (!mass) return null;
+
+                  return (
+                    <RideCard 
+                      key={ride.id} 
+                      ride={{
+                        id: ride.id,
+                        massName: mass.name,
+                        massDatetime: new Date(mass.datetime),
+                        driverName: "Driver",
+                        driverPhone: "08123456789",
+                        pickupPoint: ride.pickupPoint,
+                        seatsAvailable: ride.seatsAvailable,
+                        seatsTotal: ride.seatsTotal,
+                        notes: ride.notes,
+                      }}
+                    />
+                  );
+                })
               ) : (
                 <div className="text-center py-12 text-muted-foreground" data-testid="text-empty-state">
                   Belum ada tumpangan untuk misa ini
@@ -129,12 +102,15 @@ export default function RidesPage() {
 
         {view === "masses" && (
           <div className="space-y-3">
-            {mockMasses.map(mass => {
-              const rideCount = mockRides.filter(r => r.massId === mass.id).length;
+            {masses.map((mass: any) => {
+              const rideCount = rides.filter((r: any) => r.massId === mass.id).length;
               return (
                 <MassCard 
                   key={mass.id} 
-                  mass={mass} 
+                  mass={{
+                    ...mass,
+                    datetime: new Date(mass.datetime),
+                  }} 
                   rideCount={rideCount}
                   onViewRides={(id) => {
                     setSelectedMass(id);

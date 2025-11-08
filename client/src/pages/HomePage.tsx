@@ -1,59 +1,35 @@
-import { useState } from "react";
 import { Link } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import MassCard from "@/components/MassCard";
 import RideCard from "@/components/RideCard";
 import heroImage from "@assets/generated_images/Church_community_carpooling_hero_3e826d8b.png";
 import { ChevronRight } from "lucide-react";
+import { useAuth } from "@/lib/auth";
 
 export default function HomePage() {
-  const [user] = useState<any>(null);
+  const { user } = useAuth();
 
-  //todo: remove mock functionality
-  const mockMasses = [
-    {
-      id: '1',
-      name: 'Misa Minggu Pagi',
-      datetime: new Date(2025, 0, 12, 7, 0),
-      special: false,
+  const { data: massesData } = useQuery({
+    queryKey: ["/api/masses"],
+    queryFn: async () => {
+      const response = await fetch("/api/masses");
+      if (!response.ok) throw new Error("Failed to fetch masses");
+      return response.json();
     },
-    {
-      id: '2',
-      name: 'Misa Sabtu Sore',
-      datetime: new Date(2025, 0, 11, 18, 0),
-      special: false,
-    },
-    {
-      id: '3',
-      name: 'Misa Kamis Putih',
-      datetime: new Date(2025, 3, 17, 19, 0),
-      special: true,
-    },
-  ];
+  });
 
-  const mockRecentRides = [
-    {
-      id: '1',
-      massName: 'Misa Minggu Pagi',
-      massDatetime: new Date(2025, 0, 12, 7, 0),
-      driverName: 'Budi Santoso',
-      driverPhone: '081234567890',
-      pickupPoint: 'Lippo Cikarang, depan Supermal',
-      seatsAvailable: 3,
-      seatsTotal: 5,
-      notes: 'Berangkat jam 6:30 pagi. Mohon konfirmasi H-1.',
+  const { data: ridesData } = useQuery({
+    queryKey: ["/api/rides"],
+    queryFn: async () => {
+      const response = await fetch("/api/rides");
+      if (!response.ok) throw new Error("Failed to fetch rides");
+      return response.json();
     },
-    {
-      id: '2',
-      massName: 'Misa Sabtu Sore',
-      massDatetime: new Date(2025, 0, 11, 18, 0),
-      driverName: 'Maria Wijaya',
-      driverPhone: '082345678901',
-      pickupPoint: 'Cibitung, Perumahan Grand Cikarang',
-      seatsAvailable: 2,
-      seatsTotal: 4,
-    },
-  ];
+  });
+
+  const masses = massesData?.masses || [];
+  const rides = ridesData?.rides || [];
 
   return (
     <div className="min-h-screen bg-background pb-20">
@@ -103,12 +79,14 @@ export default function HomePage() {
             </Link>
           </div>
           <div className="space-y-3">
-            {mockMasses.map(mass => (
+            {masses.slice(0, 3).map((mass: any) => (
               <MassCard 
                 key={mass.id} 
-                mass={mass} 
-                rideCount={mass.id === '1' ? 5 : mass.id === '2' ? 3 : 0}
-                onViewRides={(id) => console.log('View rides for mass:', id)}
+                mass={{
+                  ...mass,
+                  datetime: new Date(mass.datetime),
+                }} 
+                rideCount={rides.filter((r: any) => r.massId === mass.id).length}
               />
             ))}
           </div>
@@ -127,13 +105,27 @@ export default function HomePage() {
             </Link>
           </div>
           <div className="space-y-3">
-            {mockRecentRides.map(ride => (
-              <RideCard 
-                key={ride.id} 
-                ride={ride}
-                onViewDetails={(id) => console.log('View details:', id)}
-              />
-            ))}
+            {rides.slice(0, 3).map((ride: any) => {
+              const mass = masses.find((m: any) => m.id === ride.massId);
+              if (!mass) return null;
+              
+              return (
+                <RideCard 
+                  key={ride.id} 
+                  ride={{
+                    id: ride.id,
+                    massName: mass.name,
+                    massDatetime: new Date(mass.datetime),
+                    driverName: "Driver",
+                    driverPhone: "08123456789",
+                    pickupPoint: ride.pickupPoint,
+                    seatsAvailable: ride.seatsAvailable,
+                    seatsTotal: ride.seatsTotal,
+                    notes: ride.notes,
+                  }}
+                />
+              );
+            })}
           </div>
         </section>
       </div>
