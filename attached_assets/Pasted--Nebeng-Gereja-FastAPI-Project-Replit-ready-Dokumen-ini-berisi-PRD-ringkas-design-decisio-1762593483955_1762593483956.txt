@@ -1,0 +1,776 @@
+# Nebeng Gereja — FastAPI Project (Replit-ready)
+
+> Dokumen ini berisi PRD ringkas, design decisions, dan **kerangka proyek lengkap** (kode sumber, file templates, instruksi instalasi) yang bisa kamu copy-paste ke Replit dan langsung dijalankan.
+
+---
+
+## Ringkasan Singkat (Tujuan)
+
+Aplikasi web-based mobile-first untuk jemaat **Paroki Ibu Teresa Cikarang** agar dapat menawarkan atau mencari tumpangan ke misa yang sudah ditentukan admin. Web-app ini menggunakan **FastAPI**, **SQLite**, dan Jinja2 templates. Fokus: *simpel, ringan, dan mobile-friendly*.
+
+---
+
+## Fitur Inti (MVP)
+
+1. Registrasi & Login (nama, lingkungan, nomor HP, role)
+2. Admin mengatur jadwal misa (`masses`) dan daftar lingkungan (`environments`)
+3. Driver: membuat posting tumpangan (pilih jadwal, titik kumpul, jumlah kursi)
+4. Passenger: melihat daftar tumpangan per jadwal, dapat memesan kursi (jumlah per keluarga)
+5. Otomatis mengurangi `seats_available` ketika booking berhasil dan menambah kembali saat pembatalan
+6. Tanpa chat internal — tombol "Hubungi via WhatsApp" yang membuka `https://wa.me/<phone>` dengan pesan template
+7. UI: mobile-first (Bootstrap 5), bottom navigation sederhana
+
+---
+
+## Struktur Proyek (file / folder yang harus dibuat)
+
+```
+nebeng-gereja/
+├── requirements.txt
+├── main.py
+├── database.py
+├── models.py
+├── schemas.py
+├── crud.py
+├── auth.py
+├── utils.py
+├── templates/
+│   ├── base.html
+│   ├── index.html
+│   ├── register.html
+│   ├── login.html
+│   ├── dashboard.html
+│   ├── post_ride.html
+│   ├── rides_list.html
+│   ├── ride_detail.html
+│   └── admin_dashboard.html
+└── static/
+    ├── css/style.css
+    └── js/app.js
+```
+
+---
+
+## Requirements (requirements.txt)
+
+```
+fastapi==0.99.0
+uvicorn[standard]==0.22.0
+SQLAlchemy==2.0.20
+alembic==1.11.1
+jinja2==3.1.2
+python-multipart==0.0.6
+passlib[bcrypt]==1.7.4
+itsdangerous==2.1.2
+email-validator==2.2.0
+python-dotenv==1.0.0
+```
+
+> Catatan: versi dapat disesuaikan saat deploy. Di Replit, cukup paste `requirements.txt` lalu Replit akan menginstall.
+
+---
+
+## Langkah Singkat Menjalankan di Replit
+
+1. Buat repl baru (Python).
+2. Upload/Copy semua file/folder seperti struktur di atas.
+3. Pastikan file `requirements.txt` ada, lalu Replit akan otomatis menginstall dependency. Jika tidak, jalankan `pip install -r requirements.txt` di Shell Replit.
+4. Jalankan perintah (Shell) di Replit: `uvicorn main:app --host 0.0.0.0 --port 3000 --reload`
+
+   * Replit biasanya memetakan port ke 3000/port tertentu; pilih port yang sesuai pengaturan Replit.
+5. Buka URL yang disediakan Replit.
+
+---
+
+## Desain API & Alur (ringkas)
+
+* `GET /` → Beranda (menampilkan daftar misa mendatang dan tombol aksi)
+* `GET /register`, `POST /register` → Registrasi
+* `GET /login`, `POST /login` → Login (session via cookie sederhana)
+* `GET /dashboard` → Dashboard user (role-aware)
+* `GET /rides` → Daftar tumpangan berdasarkan jadwal (filterable)
+* `GET /rides/{ride_id}` → Detail tumpangan
+* `POST /rides` → Buat tumpangan (driver)
+* `POST /rides/{ride_id}/book` → Booking kursi
+* `POST /rides/{ride_id}/cancel` → Batalkan booking
+* `GET /admin` → Admin dashboard (kelola jadwal & lingkungan)
+
+---
+
+## Database Schema (SQLAlchemy models)
+
+* `User` (id, name, email, phone, lingkungan, role, password_hash, created_at)
+* `Mass` (id, name, datetime, special)
+* `Environment` (id, name)
+* `Ride` (id, driver_id -> User, mass_id -> Mass, pickup_point, seats_total, seats_available, notes, created_at, status)
+* `Booking` (id, ride_id, passenger_id, seats_requested, created_at)
+
+---
+
+## Code — file-by-file (salin & buat file sesuai nama)
+
+> **Penting**: salin tiap blok ke file tersendiri dengan nama file yang tercantum.
+
+---
+
+### `database.py`
+
+```python
+# database.py
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, declarative_base
+
+SQLITE_URL = "sqlite:///./nebeng.db"
+
+engine = create_engine(SQLITE_URL, connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+```
+
+---
+
+### `models.py`
+
+```python
+# models.py
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, Text
+from sqlalchemy.orm import relationship
+from datetime import datetime
+from database import Base
+
+class User(Base):
+    __tablename__ = 'users'
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    email = Column(String, unique=True, nullable=False, index=True)
+    phone = Column(String, nullable=False)
+    lingkungan = Column(String, nullable=True)
+    role = Column(String, default='passenger')
+    password_hash = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class Mass(Base):
+    __tablename__ = 'masses'
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    datetime = Column(DateTime, nullable=False)
+    special = Column(Boolean, default=False)
+
+class Environment(Base):
+    __tablename__ = 'environments'
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, unique=True)
+
+class Ride(Base):
+    __tablename__ = 'rides'
+    id = Column(Integer, primary_key=True, index=True)
+    driver_id = Column(Integer, ForeignKey('users.id'))
+    mass_id = Column(Integer, ForeignKey('masses.id'))
+    pickup_point = Column(String, nullable=True)
+    seats_total = Column(Integer, default=1)
+    seats_available = Column(Integer, default=1)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    status = Column(String, default='active')
+
+class Booking(Base):
+    __tablename__ = 'bookings'
+    id = Column(Integer, primary_key=True, index=True)
+    ride_id = Column(Integer, ForeignKey('rides.id'))
+    passenger_id = Column(Integer, ForeignKey('users.id'))
+    seats_requested = Column(Integer, default=1)
+    created_at = Column(DateTime, default=datetime.utcnow)
+```
+
+---
+
+### `utils.py`
+
+```python
+# utils.py
+from passlib.context import CryptContext
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return pwd_context.verify(plain_password, hashed_password)
+```
+
+---
+
+### `auth.py`
+
+```python
+# auth.py
+from fastapi import Request
+from itsdangerous import URLSafeSerializer
+from starlette.middleware.sessions import SessionMiddleware
+
+SECRET_KEY = "CHANGE_ME_TO_A_RANDOM_SECRET"  # replace in production or .env
+serializer = URLSafeSerializer(SECRET_KEY)
+
+# Use this module to help with session-based login helper functions
+
+def init_session(app):
+    app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
+
+
+def login_user(request: Request, user_id: int):
+    request.session['user_id'] = user_id
+
+
+def logout_user(request: Request):
+    request.session.pop('user_id', None)
+
+
+def get_current_user(request: Request, db_session):
+    user_id = request.session.get('user_id')
+    if not user_id:
+        return None
+    from models import User
+    return db_session.query(User).filter(User.id == user_id).first()
+```
+
+---
+
+### `crud.py`
+
+```python
+# crud.py
+from models import User, Mass, Environment, Ride, Booking
+from utils import hash_password, verify_password
+from datetime import datetime
+
+
+def create_user(db, name, email, phone, lingkungan, role, password):
+    user = User(name=name, email=email, phone=phone, lingkungan=lingkungan, role=role, password_hash=hash_password(password))
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def authenticate_user(db, email, password):
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        return None
+    if not verify_password(password, user.password_hash):
+        return None
+    return user
+
+
+def create_mass(db, name, dt, special=False):
+    m = Mass(name=name, datetime=dt, special=special)
+    db.add(m)
+    db.commit()
+    db.refresh(m)
+    return m
+
+
+def create_environment(db, name):
+    e = Environment(name=name)
+    db.add(e)
+    db.commit()
+    db.refresh(e)
+    return e
+
+
+def create_ride(db, driver_id, mass_id, pickup_point, seats_total, notes):
+    r = Ride(driver_id=driver_id, mass_id=mass_id, pickup_point=pickup_point, seats_total=seats_total, seats_available=seats_total, notes=notes)
+    db.add(r)
+    db.commit()
+    db.refresh(r)
+    return r
+
+
+def book_ride(db, ride_id, passenger_id, seats_requested):
+    ride = db.query(Ride).filter(Ride.id == ride_id, Ride.status == 'active').with_for_update().first()
+    if not ride:
+        return None, 'Ride not found or inactive'
+    if ride.seats_available < seats_requested:
+        return None, 'Not enough seats available'
+    booking = Booking(ride_id=ride_id, passenger_id=passenger_id, seats_requested=seats_requested)
+    ride.seats_available -= seats_requested
+    db.add(booking)
+    db.commit()
+    db.refresh(booking)
+    return booking, None
+
+
+def cancel_booking(db, booking_id):
+    booking = db.query(Booking).filter(Booking.id == booking_id).first()
+    if not booking:
+        return None
+    ride = db.query(Ride).filter(Ride.id == booking.ride_id).first()
+    if ride:
+        ride.seats_available += booking.seats_requested
+    db.delete(booking)
+    db.commit()
+    return True
+```
+
+---
+
+### `main.py`
+
+```python
+# main.py
+from fastapi import FastAPI, Request, Form, Depends
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from database import engine, SessionLocal
+import models
+from auth import init_session, login_user, logout_user, get_current_user
+from crud import create_user, authenticate_user, create_mass, create_environment, create_ride, book_ride
+from datetime import datetime
+
+models.Base.metadata.create_all(bind=engine)
+
+app = FastAPI()
+init_session(app)
+
+app.mount('/static', StaticFiles(directory='static'), name='static')
+templates = Jinja2Templates(directory='templates')
+
+# Dependency
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+@app.get('/')
+def index(request: Request, db=Depends(get_db)):
+    # show next 7 masses and recent rides
+    masses = db.query(models.Mass).order_by(models.Mass.datetime).limit(10).all()
+    rides = db.query(models.Ride).filter(models.Ride.status == 'active').order_by(models.Ride.created_at.desc()).limit(50).all()
+    return templates.TemplateResponse('index.html', {'request': request, 'masses': masses, 'rides': rides})
+
+
+@app.get('/register')
+def register_get(request: Request, db=Depends(get_db)):
+    envs = db.query(models.Environment).all()
+    return templates.TemplateResponse('register.html', {'request': request, 'envs': envs})
+
+
+@app.post('/register')
+def register_post(request: Request, name: str = Form(...), email: str = Form(...), phone: str = Form(...), lingkungan: str = Form(None), role: str = Form('passenger'), password: str = Form(...), db=Depends(get_db)):
+    user = create_user(db, name, email, phone, lingkungan, role, password)
+    # auto-login
+    response = RedirectResponse(url='/', status_code=303)
+    with SessionLocal() as s:
+        login_user(request, user.id)
+    return response
+
+
+@app.get('/login')
+def login_get(request: Request):
+    return templates.TemplateResponse('login.html', {'request': request})
+
+
+@app.post('/login')
+def login_post(request: Request, email: str = Form(...), password: str = Form(...), db=Depends(get_db)):
+    user = authenticate_user(db, email, password)
+    if not user:
+        return templates.TemplateResponse('login.html', {'request': request, 'error': 'Invalid credentials'})
+    login_user(request, user.id)
+    return RedirectResponse(url='/', status_code=303)
+
+
+@app.get('/logout')
+def logout(request: Request):
+    logout_user(request)
+    return RedirectResponse(url='/', status_code=303)
+
+
+@app.get('/post-ride')
+def post_ride_get(request: Request, db=Depends(get_db)):
+    masses = db.query(models.Mass).order_by(models.Mass.datetime).all()
+    return templates.TemplateResponse('post_ride.html', {'request': request, 'masses': masses})
+
+
+@app.post('/post-ride')
+def post_ride_post(request: Request, mass_id: int = Form(...), pickup_point: str = Form(''), seats_total: int = Form(...), notes: str = Form(''), db=Depends(get_db)):
+    user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse(url='/login', status_code=303)
+    r = create_ride(db, user.id, mass_id, pickup_point, seats_total, notes)
+    return RedirectResponse(url='/', status_code=303)
+
+
+@app.get('/rides')
+def list_rides(request: Request, mass_id: int = None, db=Depends(get_db)):
+    if mass_id:
+        rides = db.query(models.Ride).filter(models.Ride.mass_id == mass_id, models.Ride.status == 'active').all()
+    else:
+        rides = db.query(models.Ride).filter(models.Ride.status == 'active').all()
+    masses = db.query(models.Mass).order_by(models.Mass.datetime).all()
+    return templates.TemplateResponse('rides_list.html', {'request': request, 'rides': rides, 'masses': masses})
+
+
+@app.get('/rides/{ride_id}')
+def ride_detail(request: Request, ride_id: int, db=Depends(get_db)):
+    ride = db.query(models.Ride).filter(models.Ride.id == ride_id).first()
+    return templates.TemplateResponse('ride_detail.html', {'request': request, 'ride': ride})
+
+
+@app.post('/rides/{ride_id}/book')
+def ride_book(request: Request, ride_id: int, seats: int = Form(1), db=Depends(get_db)):
+    user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse(url='/login', status_code=303)
+    booking, err = book_ride(db, ride_id, user.id, seats)
+    if err:
+        # Show error on ride detail
+        ride = db.query(models.Ride).filter(models.Ride.id == ride_id).first()
+        return templates.TemplateResponse('ride_detail.html', {'request': request, 'ride': ride, 'error': err})
+    return RedirectResponse(url='/rides/{}'.format(ride_id), status_code=303)
+
+
+# Admin routes (simple)
+@app.get('/admin')
+def admin_dashboard(request: Request, db=Depends(get_db)):
+    masses = db.query(models.Mass).order_by(models.Mass.datetime).all()
+    envs = db.query(models.Environment).all()
+    users = db.query(models.User).all()
+    rides = db.query(models.Ride).all()
+    return templates.TemplateResponse('admin_dashboard.html', {'request': request, 'masses': masses, 'envs': envs, 'users': users, 'rides': rides})
+
+
+@app.post('/admin/mass')
+def admin_create_mass(request: Request, name: str = Form(...), datetime_str: str = Form(...), special: str = Form(None), db=Depends(get_db)):
+    dt = datetime.fromisoformat(datetime_str)
+    create_mass(db, name, dt, special=bool(special))
+    return RedirectResponse(url='/admin', status_code=303)
+
+
+@app.post('/admin/env')
+def admin_create_env(request: Request, name: str = Form(...), db=Depends(get_db)):
+    create_environment(db, name)
+    return RedirectResponse(url='/admin', status_code=303)
+```
+
+---
+
+## Template Files (Jinja2)
+
+> Buat folder `templates/` dan simpan file berikut.
+
+### `templates/base.html`
+
+```html
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nebeng Gereja</title>
+  <link href="/static/css/style.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+  <nav class="navbar bg-white shadow-sm">
+    <div class="container-fluid">
+      <a class="navbar-brand" href="/">Nebeng Gereja</a>
+      <div>
+        <a href="/post-ride" class="btn btn-sm btn-primary">Saya Punya Mobil</a>
+        <a href="/rides" class="btn btn-sm btn-outline-primary">Saya Butuh Tumpangan</a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="container mt-3">
+    {% block content %}{% endblock %}
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
+```
+
+---
+
+### `templates/index.html`
+
+```html
+{% extends 'base.html' %}
+{% block content %}
+  <h5>Misa Mendatang</h5>
+  <div class="list-group mb-3">
+    {% for m in masses %}
+      <div class="list-group-item">
+        <div class="d-flex w-100 justify-content-between">
+          <h6 class="mb-1">{{ m.name }}</h6>
+          <small>{{ m.datetime.strftime('%d %b %Y %H:%M') }}</small>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+
+  <h5>Daftar Tumpangan Terbaru</h5>
+  <div class="list-group">
+    {% for r in rides %}
+      <a href="/rides/{{ r.id }}" class="list-group-item list-group-item-action">
+        <div class="d-flex w-100 justify-content-between">
+          <h6 class="mb-1">{{ r.pickup_point or 'Titik jemput' }}</h6>
+          <small>{{ r.created_at.strftime('%d %b %Y') }}</small>
+        </div>
+        <p class="mb-1">Kursi: {{ r.seats_available }}/{{ r.seats_total }}</p>
+      </a>
+    {% endfor %}
+  </div>
+{% endblock %}
+```
+
+---
+
+### `templates/register.html`
+
+```html
+{% extends 'base.html' %}
+{% block content %}
+  <h5>Registrasi</h5>
+  <form action="/register" method="post">
+    <div class="mb-2">
+      <label class="form-label">Nama</label>
+      <input name="name" class="form-control" required>
+    </div>
+    <div class="mb-2">
+      <label class="form-label">Email</label>
+      <input name="email" type="email" class="form-control" required>
+    </div>
+    <div class="mb-2">
+      <label class="form-label">Nomor HP (WhatsApp)</label>
+      <input name="phone" class="form-control" required>
+    </div>
+    <div class="mb-2">
+      <label class="form-label">Lingkungan</label>
+      <select name="lingkungan" class="form-select">
+        <option value="">-- pilih lingkungan --</option>
+        {% for e in envs %}
+          <option value="{{ e.name }}">{{ e.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="mb-2">
+      <label class="form-label">Peran</label>
+      <select name="role" class="form-select">
+        <option value="passenger">Passenger</option>
+        <option value="driver">Driver</option>
+      </select>
+    </div>
+    <div class="mb-2">
+      <label class="form-label">Password</label>
+      <input name="password" type="password" class="form-control" required>
+    </div>
+    <button class="btn btn-primary">Daftar</button>
+  </form>
+{% endblock %}
+```
+
+---
+
+### `templates/login.html`
+
+```html
+{% extends 'base.html' %}
+{% block content %}
+  <h5>Login</h5>
+  {% if error %}
+    <div class="alert alert-danger">{{ error }}</div>
+  {% endif %}
+  <form action="/login" method="post">
+    <div class="mb-2">
+      <label class="form-label">Email</label>
+      <input name="email" type="email" class="form-control" required>
+    </div>
+    <div class="mb-2">
+      <label class="form-label">Password</label>
+      <input name="password" type="password" class="form-control" required>
+    </div>
+    <button class="btn btn-primary">Login</button>
+  </form>
+{% endblock %}
+```
+
+---
+
+### `templates/post_ride.html`
+
+```html
+{% extends 'base.html' %}
+{% block content %}
+  <h5>Buat Tumpangan</h5>
+  <form action="/post-ride" method="post">
+    <div class="mb-2">
+      <label class="form-label">Pilih Misa</label>
+      <select name="mass_id" class="form-select">
+        {% for m in masses %}
+          <option value="{{ m.id }}">{{ m.name }} — {{ m.datetime.strftime('%d %b %Y %H:%M') }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="mb-2">
+      <label class="form-label">Titik Jemput</label>
+      <input name="pickup_point" class="form-control">
+    </div>
+    <div class="mb-2">
+      <label class="form-label">Jumlah Kursi</label>
+      <input name="seats_total" type="number" class="form-control" value="1" min="1">
+    </div>
+    <div class="mb-2">
+      <label class="form-label">Catatan</label>
+      <textarea name="notes" class="form-control"></textarea>
+    </div>
+    <button class="btn btn-primary">Posting Tumpangan</button>
+  </form>
+{% endblock %}
+```
+
+---
+
+### `templates/rides_list.html`
+
+```html
+{% extends 'base.html' %}
+{% block content %}
+  <h5>Pilih Misa</h5>
+  <form action="/rides" method="get" class="mb-3">
+    <select name="mass_id" class="form-select mb-2">
+      <option value="">-- Semua Misa --</option>
+      {% for m in masses %}
+        <option value="{{ m.id }}">{{ m.name }} — {{ m.datetime.strftime('%d %b %Y %H:%M') }}</option>
+      {% endfor %}
+    </select>
+    <button class="btn btn-outline-primary">Filter</button>
+  </form>
+
+  <div class="list-group">
+    {% for r in rides %}
+      <a href="/rides/{{ r.id }}" class="list-group-item list-group-item-action">
+        <div class="d-flex w-100 justify-content-between">
+          <h6 class="mb-1">{{ r.pickup_point or 'Titik jemput' }}</h6>
+          <small>Kursi: {{ r.seats_available }}/{{ r.seats_total }}</small>
+        </div>
+        <p class="mb-1">{{ r.notes or '' }}</p>
+      </a>
+    {% endfor %}
+  </div>
+{% endblock %}
+```
+
+---
+
+### `templates/ride_detail.html`
+
+```html
+{% extends 'base.html' %}
+{% block content %}
+  <h5>Detail Tumpangan</h5>
+  {% if error %}
+    <div class="alert alert-danger">{{ error }}</div>
+  {% endif %}
+  <div class="card mb-3">
+    <div class="card-body">
+      <h6 class="card-title">{{ ride.pickup_point }}</h6>
+      <p class="card-text">Kursi: {{ ride.seats_available }}/{{ ride.seats_total }}</p>
+      <p class="card-text">Catatan: {{ ride.notes }}</p>
+      {% set driver = ride.driver_id and (request.state.db.query(models.User).get(ride.driver_id) if True else None) %}
+      <!-- simple WA link (driver phone must be retrieved in backend ideally) -->
+      <p>Kontak driver: <a href="https://wa.me/{{ ride.driver_id }}">Hubungi via WhatsApp</a> (nomor akan tampil setelah implementasi backend lengkap)</p>
+      {% if ride.seats_available > 0 %}
+      <form action="/rides/{{ ride.id }}/book" method="post" class="mt-2">
+        <div class="mb-2">
+          <label class="form-label">Jumlah orang</label>
+          <input type="number" name="seats" class="form-control" value="1" min="1" max="{{ ride.seats_available }}">
+        </div>
+        <button class="btn btn-primary">Nebeng</button>
+      </form>
+      {% else %}
+        <div class="alert alert-secondary">Penuh</div>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}
+```
+
+---
+
+### `templates/admin_dashboard.html`
+
+```html
+{% extends 'base.html' %}
+{% block content %}
+  <h5>Admin Dashboard</h5>
+  <div class="row">
+    <div class="col-12">
+      <h6>Tambahkan Misa</h6>
+      <form action="/admin/mass" method="post" class="mb-3">
+        <input name="name" placeholder="Nama misa (misal: Minggu 07.00)" class="form-control mb-1">
+        <input name="datetime_str" placeholder="YYYY-MM-DDTHH:MM:SS" class="form-control mb-1">
+        <button class="btn btn-sm btn-primary">Tambah Misa</button>
+      </form>
+
+      <h6>Tambahkan Lingkungan</h6>
+      <form action="/admin/env" method="post">
+        <input name="name" placeholder="Nama lingkungan" class="form-control mb-1">
+        <button class="btn btn-sm btn-primary">Tambah Lingkungan</button>
+      </form>
+
+      <hr>
+      <h6>Daftar Lingkungan</h6>
+      <ul>
+        {% for e in envs %}
+          <li>{{ e.name }}</li>
+        {% endfor %}
+      </ul>
+
+      <h6>Daftar Misa</h6>
+      <ul>
+        {% for m in masses %}
+          <li>{{ m.name }} — {{ m.datetime }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+{% endblock %}
+```
+
+---
+
+## Catatan Implementasi & Perbaikan yang Bisa Dilakukan Nanti
+
+1. **Keamanan**: ganti `SECRET_KEY` di `auth.py` dan gunakan env var. Terapkan HTTPS saat produksi.
+2. **Validasi**: tambahkan validasi input dan handling error lebih robust.
+3. **Nomor WhatsApp driver**: di template `ride_detail` saya contohkan pola WA. Pastikan backend melewatkan `driver.phone` ke template agar link WA benar (`https://wa.me/628123...`).
+4. **Concurrency**: SQLite memiliki batasan concurrency; untuk ukuran kecil jemaat ini cukup. Jika scale up, pindah ke PostgreSQL.
+5. **UX**: tambahkan toast/alert di UI saat booking sukses, dan halaman "Perjalanan Saya" untuk melihat booking.
+6. **Testing**: buat user admin manual via script atau endpoint, lalu tambahkan beberapa `Mass` dan `Environment`.
+
+---
+
+## Quickstart (step-by-step)
+
+1. Salin file `requirements.txt` dan jalankan `pip install -r requirements.txt`.
+2. Salin semua file `.py` dan folder `templates/` dan `static/`.
+3. Jalankan `uvicorn main:app --host 0.0.0.0 --port 3000 --reload`.
+4. Buka browser pada `http://<replit-url>:3000/`.
+5. Masuk ke `/admin` untuk menambah `Environment` dan `Mass`.
+6. Registrasi user driver & passenger, lalu coba posting & booking.
+
+---
+
+Jika kamu ingin, saya bisa juga:
+
+* Membuat **versi ZIP** dari project (agar mudah di-upload ke Replit). (minta saya buatkan file)
+* Menuliskan instruksi khusus untuk **deploy di Railway** atau **Render**.
+* Menghasilkan **wireframe mobile** untuk tiap layar.
+
+*Selesai dokumen initial. Silakan buka file ini dan copy ke Replit — kalau ada error saat run, tempelkan pesan errornya ke saya dan saya bantu perbaiki.*
